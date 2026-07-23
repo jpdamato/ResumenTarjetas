@@ -37,7 +37,7 @@ import auth
 import db
 from categorize import Categorizer
 from dashboard import build_payload
-from parsers import bna, santander
+from parsers import bna, bna_visa, santander
 from reconcile import check_statement, format_report
 
 DATOS = Path(os.environ.get("DATOS", "/datos"))
@@ -47,17 +47,25 @@ LOGIN_HTML = Path(__file__).with_name("login.html")
 
 COOKIE = "sesion"
 
-# Cada banco: su parser y como reconocerlo dentro del PDF.
+# Cada banco+tarjeta: su parser y en que subcarpeta se guardan sus PDFs. La
+# deteccion por contenido no vive aca sino en detectar_banco(), porque los tres
+# no se distinguen con una simple lista de palabras (los dos productos del BNA
+# comparten "Banco Nacion", y tanto Santander como BNA Visa dicen "VISA").
 BANCOS = {
     "santander": {
         "nombre": "Santander VISA",
         "parser": santander,
-        "senas": ("SANTANDER",),
+        "carpeta": "santander",
     },
     "bna": {
         "nombre": "BNA Nativa Mastercard",
         "parser": bna,
-        "senas": ("NATIVA", "BANCO NACION", "MASTERCARD INTERNACIONAL"),
+        "carpeta": "bna/mastercard",
+    },
+    "bna_visa": {
+        "nombre": "BNA Visa",
+        "parser": bna_visa,
+        "carpeta": "bna/visa",
     },
 }
 
@@ -281,9 +289,32 @@ def carpeta_pdfs(conn, usuario_id: int, banco: str) -> Path:
     que montan los volumenes de siempre. Moverselos ahi habria significado
     tocar el docker-compose de una instalacion que ya funciona.
     """
+    sub = BANCOS[banco]["carpeta"]
     if usuario_id == auth.usuario_legado(conn):
-        return DATOS / banco
-    return DATOS / "usuarios" / str(usuario_id) / banco
+        return DATOS / sub
+    return DATOS / "usuarios" / str(usuario_id) / sub
+
+
+def clasificar_texto(texto_mayus: str) -> str | None:
+    """De que banco+tarjeta es un resumen, mirando su texto (en MAYUSCULAS).
+
+    El orden importa: los tres son tarjetas y varias señas se solapan.
+    - Santander es VISA pero es el unico que dice "SANTANDER" -> primero.
+    - Nativa es la unica Mastercard del BNA -> "NATIVA"/"MASTERCARD".
+    - Lo que queda del BNA ("NACION") y es "VISA" es la Visa del BNA.
+    """
+    if "SANTANDER" in texto_mayus:
+        return "santander"
+    if "NATIVA" in texto_mayus or "MASTERCARD" in texto_mayus:
+        return "bna"
+    # "NACION" no sirve como seña: el PDF imprime "Nación" con un acento que la
+    # extraccion pierde, asi que la palabra no aparece entera. Se usan marcas
+    # que si quedan en ASCII: "BNA" (aparece en el pie) y el nombre del producto.
+    marcas_bna_visa = ("BNA", "VISA CLASSIC", "VISA GOLD", "VISA PLATINUM",
+                       "CENTRO DE SERVICIOS VISA", "PROGRAMA DE LEALTAD")
+    if "VISA" in texto_mayus and any(s in texto_mayus for s in marcas_bna_visa):
+        return "bna_visa"
+    return None
 
 
 def detectar_banco(pdf_path: Path) -> str | None:
@@ -295,10 +326,7 @@ def detectar_banco(pdf_path: Path) -> str | None:
             ).upper()
     except Exception:                                    # noqa: BLE001
         return None
-    for clave, cfg in BANCOS.items():
-        if any(s in texto for s in cfg["senas"]):
-            return clave
-    return None
+    return clasificar_texto(texto)
 
 
 def mismo_archivo(a: Path, b: Path) -> bool:

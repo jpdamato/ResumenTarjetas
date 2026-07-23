@@ -26,24 +26,35 @@ from pathlib import Path
 import auth
 import db
 from categorize import Categorizer
-from parsers import bna, santander
+from parsers import bna, bna_visa, santander
 from reconcile import check_statement, format_report
 
 BASE = Path(__file__).parent.parent
 
-# Como reconocer a que banco pertenece cada PDF
-PARSERS = [
-    ("santander", santander, ("santander", "visa")),
-    ("bna", bna, ("bna", "nativa", "nacion", "mastercard")),
-]
-
 
 def pick_parser(path: Path):
-    """Elige parser por carpeta o por nombre de archivo."""
-    hint = f"{path.parent.name} {path.name}".lower()
-    for _, module, keywords in PARSERS:
-        if any(k in hint for k in keywords):
-            return module
+    """Elige el parser segun donde esta el PDF (o, si no alcanza, su nombre).
+
+    El layout de carpetas manda: santander/, bna/mastercard/ y bna/visa/. Se
+    mira el path completo y no solo la carpeta madre, porque "visa" aparece
+    tanto en bna/visa como en el nombre de los resumenes de Santander, y solo
+    la ruta entera los distingue sin ambiguedad.
+    """
+    parts = {p.lower() for p in path.parts}
+    name = path.name.lower()
+
+    if "santander" in parts:
+        return santander
+    if "bna" in parts and "visa" in parts:
+        return bna_visa
+    if "bna" in parts and ("mastercard" in parts or "nativa" in parts):
+        return bna
+
+    # Sin una carpeta que lo ubique, se cae al nombre del archivo.
+    if "nativa" in name or "mastercard" in name:
+        return bna
+    if "santander" in name:
+        return santander
     return None
 
 
@@ -101,7 +112,10 @@ def main() -> int:
     if args.carpeta:
         pdfs = sorted(args.carpeta.rglob("*.pdf"))
     else:
-        pdfs = sorted(BASE.glob("*/*.pdf"))
+        # Recursivo: los resumenes del BNA ahora cuelgan de subcarpetas
+        # (bna/mastercard, bna/visa), no directamente de bna/.
+        pdfs = sorted(p for carpeta in (BASE / "santander", BASE / "bna")
+                      for p in carpeta.rglob("*.pdf"))
 
     # Las carpetas de otros usuarios cuelgan de la misma raiz, y cargar sus PDFs
     # acá se los atribuiria al usuario equivocado: seria exactamente la fuga que

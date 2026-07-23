@@ -1,10 +1,29 @@
 # Análisis de resúmenes de tarjeta
 
-Convierte los PDFs de los resúmenes (Santander VISA y BNA Nativa Mastercard) en
-una base SQLite local y genera un tablero HTML interactivo con gráficos, grilla
-filtrable y totales.
+Convierte los PDFs de los resúmenes (Santander VISA, BNA Nativa Mastercard y
+BNA Visa) en una base SQLite local y genera un tablero HTML interactivo con
+gráficos, grilla filtrable y totales.
 
 Todo corre local: los PDFs, la base y el tablero no salen de esta carpeta.
+
+## Usuarios
+
+El tablero tiene usuarios: cada uno entra con usuario y contraseña y ve
+**solamente sus propios resúmenes**. Al arrancar por primera vez se crea el
+usuario inicial (`jpd`), dueño de todo lo que ya estaba cargado.
+
+Desde la web cualquiera puede crear su cuenta (registro abierto). Para cerrarlo
+—que las cuentas las cree solo el administrador— poné `REGISTRO_ABIERTO=0` en
+`docker-compose.yml` y creá los usuarios a mano:
+
+```bash
+docker compose exec tarjetas python usuarios.py crear ana
+docker compose exec tarjetas python usuarios.py listar
+docker compose exec tarjetas python usuarios.py clave ana      # cambiar contraseña
+```
+
+Las contraseñas se guardan con PBKDF2 (nunca en claro) y las sesiones viven en
+la base, en una cookie `HttpOnly`.
 
 ## Uso con Docker (un solo comando)
 
@@ -38,8 +57,13 @@ Antes de guardar nada, el servidor verifica que:
 - cuadre con los totales que declara. Si no cuadra, igual se carga pero queda
   marcado en rojo.
 
-Los PDFs que subís se guardan en `santander/` o `bna/`, junto a los demás. Subir
-dos veces el mismo resumen no duplica nada.
+Los PDFs que subís se guardan según su banco y tarjeta: `santander/`,
+`bna/mastercard/` o `bna/visa/` (los de otros usuarios van bajo
+`datos-usuarios/`, separados). Subir dos veces el mismo resumen no duplica nada.
+
+Los tres se detectan solos por su contenido. Ojo: los dos productos del BNA
+comparten el nombre del banco, y tanto Santander como BNA Visa son tarjetas
+VISA; la detección los distingue igual (ver `clasificar_texto` en `server.py`).
 
 También podés seguir copiando los PDFs a mano a esas carpetas y reiniciar el
 contenedor: las dos formas funcionan.
@@ -59,11 +83,11 @@ Detalles de cómo está armado:
 - Recargar un PDF ya cargado no duplica nada, así que levantar el contenedor
   varias veces es seguro.
 
-> El servidor no tiene usuarios ni contraseña, y `docker-compose.yml` publica el
-> puerto en todas las interfaces. En tu máquina está bien, pero **no lo expongas
-> a internet así**: cualquiera que llegue al puerto ve todos tus movimientos y
-> puede subir archivos. Para dejarlo solo local, cambiá el mapeo a
-> `"127.0.0.1:8080:8080"`.
+> El servidor ya pide usuario y contraseña, pero `docker-compose.yml` publica el
+> puerto en todas las interfaces y el **registro está abierto** por defecto:
+> cualquiera que llegue al puerto puede crearse una cuenta. En tu máquina está
+> bien, pero si lo exponés a internet cerrá el registro (`REGISTRO_ABIERTO=0`),
+> y para dejarlo solo local cambiá el mapeo a `"127.0.0.1:8080:8080"`.
 
 Para cambiar el puerto, editá `PUERTO` y el mapeo `ports` en
 `docker-compose.yml`.
@@ -174,7 +198,10 @@ patrón corto que cubra las dos.
 ## Estructura
 
 ```
-santander/, bna/           PDFs de origen (una carpeta por banco)
+santander/                 PDFs de Santander VISA
+bna/mastercard/            PDFs de BNA Nativa Mastercard
+bna/visa/                  PDFs de BNA Visa
+datos-usuarios/            PDFs del resto de los usuarios (uno por usuario)
 salida/                    base y tablero generados (cuando se usa Docker)
 tarjetas.db                base SQLite (cuando se corre sin Docker)
 tablero.html               tablero generado
@@ -182,19 +209,23 @@ Dockerfile                 imagen
 docker-compose.yml         montajes, puerto y volúmenes
 docker/entrypoint.sh       carga -> genera -> sirve
 analizador/
-  server.py                web + API de subida (lo que corre en Docker)
+  server.py                web + API de subida + login (lo que corre en Docker)
+  auth.py                  usuarios, contraseñas y sesiones
+  usuarios.py              CLI para crear/listar/borrar usuarios
+  login.html               formulario de acceso
   ingest.py                CLI de carga
   dashboard.py             genera el HTML autocontenido (sin servidor)
   template.html            plantilla del tablero
   reconcile.py             control contra los totales del PDF
   categorize.py            normaliza comercios y aplica categorías
   categories.json          reglas de categorías (editable)
-  db.py                    esquema SQLite
+  db.py                    esquema SQLite (todo colgado de usuario_id)
   parsers/
     base.py                filas por coordenadas, parseo de importes
     model.py               modelo común y clasificación de tipo
     santander.py           parser Santander VISA
     bna.py                 parser BNA Nativa Mastercard
+    bna_visa.py            parser BNA Visa
 ```
 
 ## Agregar otro banco

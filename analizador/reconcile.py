@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from parsers.model import KIND_COST, KIND_PURCHASE, Statement
+from parsers.model import KIND_COST, KIND_PAYMENT, KIND_PURCHASE, Statement
 
 TOLERANCE = Decimal("0.05")   # centavos de redondeo
 
@@ -53,6 +53,19 @@ def check_statement(statement: Statement) -> list[Check]:
     stated = statement.stated_totals
 
     for currency in ("ARS", "USD"):
+        # BNA Visa: control de saldo, que abarca TODO el resumen (consumos,
+        # costos y pagos). Solo corre cuando el parser dejo SALDO INICIAL y
+        # FINAL; los pagos vienen con importe negativo, asi que se suman.
+        ini = stated.get(f"SALDO INICIAL {currency}")
+        fin = stated.get(f"SALDO FINAL {currency}")
+        if ini is not None and fin is not None:
+            checks.append(Check(
+                label=f"BNA Visa saldo {currency}",
+                expected=fin,
+                actual=ini + _sum(statement, currency,
+                                  (KIND_PURCHASE, KIND_COST, KIND_PAYMENT)),
+            ))
+
         # BNA: "TOTAL CONSUMOS DEL MES" = solo los consumos del periodo.
         # Ojo: excluye los consumos en cuotas de meses anteriores, asi que
         # solo aplica cuando el resumen no arrastra cuotas.
