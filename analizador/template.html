@@ -235,7 +235,11 @@
   </div>
 
   <div class="card">
-    <h2>Detalle de movimientos</h2>
+    <div style="display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;">
+      <h2>Detalle de movimientos</h2>
+      <span class="spacer" style="flex:1"></span>
+      <button id="exportar" type="button">Exportar a Excel</button>
+    </div>
     <div class="h" id="h-tabla">Clic en una columna para ordenar</div>
     <div class="h" id="h-editar" hidden>
       Clic en una categoría para corregirla.
@@ -521,6 +525,74 @@ $('#tema').addEventListener('click', () => {
   const dark = document.documentElement.dataset.theme === 'dark';
   document.documentElement.dataset.theme = dark ? 'light' : 'dark';
 });
+
+// ---- exportar a Excel ------------------------------------------------------
+// Con servidor: pide el .xlsx real a /api/exportar (lo arma openpyxl con los
+// mismos filtros). Como archivo suelto (sin servidor) no hay backend, asi que
+// se genera un CSV en el navegador, que Excel abre igual.
+const TIPO_TXT = { purchase: 'Compra', cost: 'Costo tarjeta', payment: 'Pago' };
+
+function nombreExport(ext) {
+  const u = (USUARIO || 'tarjetas').replace(/[^\w.-]/g, '');
+  return `movimientos-${u}-${st.desde}_${st.hasta}-${st.moneda}.${ext}`;
+}
+
+function descargar(blob, nombre) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nombre;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function armarCSV() {
+  const filas = filtrar();   // mismo filtro (y orden) que la tabla
+  const cab = ['Fecha','Período','Descripción','Comercio','Categoría','Cuota',
+               'Titular','Banco','Moneda','Tipo','Importe'];
+  // Separador ';' y coma decimal: es lo que espera Excel en español, y evita
+  // que las descripciones con coma rompan las columnas.
+  const esc = v => {
+    const s = (v ?? '').toString();
+    return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lineas = [cab.join(';')];
+  for (const m of filas) {
+    lineas.push([
+      m.f || '', m.p, m.d, m.c, m.cat, m.cn ? m.cn + '/' + m.ct : '',
+      m.tit || '', m.b, m.mon, TIPO_TXT[m.t] || m.t,
+      m.imp.toFixed(2).replace('.', ','),
+    ].map(esc).join(';'));
+  }
+  lineas.push(['','','','','','','','','','Total (' + filas.length + ' movimientos)',
+               suma(filas).toFixed(2).replace('.', ',')].map(esc).join(';'));
+  return lineas.join('\r\n');
+}
+
+async function exportarExcel() {
+  const btn = $('#exportar');
+  btn.disabled = true;
+  try {
+    if (CON_API) {
+      const params = new URLSearchParams({
+        moneda: st.moneda, desde: st.desde, hasta: st.hasta,
+        banco: st.banco, titular: st.titular, categoria: st.categoria, q: st.q,
+      });
+      const r = await fetch('api/exportar?' + params);
+      if (r.status === 401) { location.href = 'login'; return; }
+      if (!r.ok) { avisar('No se pudo exportar el Excel.', true); return; }
+      descargar(await r.blob(), nombreExport('xlsx'));
+    } else {
+      // El BOM hace que Excel lea los acentos como UTF-8.
+      descargar(new Blob(['﻿' + armarCSV()],
+        { type: 'text/csv;charset=utf-8' }), nombreExport('csv'));
+    }
+  } catch (e) {
+    avisar('No se pudo exportar: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+$('#exportar').addEventListener('click', exportarExcel);
 
 // ---- subir resumenes -------------------------------------------------------
 // Solo tiene sentido con el servidor detras; si el HTML se abrio como archivo

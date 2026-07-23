@@ -30,11 +30,12 @@ from functools import wraps
 from pathlib import Path
 
 import pdfplumber
-from flask import Flask, g, jsonify, redirect, request, url_for
+from flask import Flask, Response, g, jsonify, redirect, request, url_for
 from markupsafe import escape
 
 import auth
 import db
+import exportar
 from categorize import Categorizer
 from dashboard import build_payload
 from parsers import bna, bna_visa, santander
@@ -406,6 +407,29 @@ def api_categoria():
                    f"({r['afectados']} movimientos, incluidos los que se suban "
                    f"más adelante).")
     return jsonify(ok=True, mensaje=mensaje, **r)
+
+
+@app.get("/api/exportar")
+@login_requerido
+def api_exportar():
+    """Devuelve un .xlsx con el detalle filtrado del usuario.
+
+    Los filtros llegan por query string, los mismos que aplica la tabla. Se
+    exporta todo lo que cae dentro del filtro, no solo las 600 filas visibles.
+    """
+    filtros = {campo: (request.args.get(campo) or "").strip()
+               for campo in ("moneda", "desde", "hasta", "banco",
+                             "titular", "categoria", "q")}
+    filtros["moneda"] = filtros["moneda"].upper()
+
+    data = exportar.generar_xlsx(g.conn, g.usuario["id"], filtros,
+                                 g.usuario["usuario"])
+    nombre = exportar.nombre_archivo(g.usuario["usuario"], filtros)
+    return Response(
+        data,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
+    )
 
 
 @app.post("/api/subir")

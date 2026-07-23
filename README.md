@@ -163,6 +163,18 @@ Hoy queda un **18,5 % de las compras en "Otros"**: son sobre todo comercios de
 Tandil que no se pueden clasificar sin conocerlos (`ARRAZOLA ROBERTO GAST`,
 `MAITILAC`, `CASASUSY`, `SILVESTRI SERGIO A`…).
 
+## Exportar a Excel
+
+El botón **Exportar a Excel**, arriba del detalle de movimientos, baja lo que
+estás viendo con **los mismos filtros** puestos (moneda, período, banco,
+titular, categoría, búsqueda). A diferencia de la tabla en pantalla —que corta
+en 600 filas—, la exportación trae **todas** las filas del filtro, con una fila
+de total al pie.
+
+Con el servidor genera un `.xlsx` de verdad (encabezado fijo, importes con
+formato, autofiltro). En el tablero abierto como archivo suelto, sin servidor,
+baja un `.csv` que Excel abre igual.
+
 ### Corregir una categoría desde la tabla
 
 En **Detalle de movimientos**, hacé clic en la categoría de cualquier fila y
@@ -231,12 +243,21 @@ analizador/
 ## Agregar otro banco
 
 Escribí un módulo en `parsers/` con una función `parse(path) -> Statement`,
-usando `extract_rows()` de `base.py`, y registralo en la lista `PARSERS` de
-`ingest.py`. Si el resumen declara algún total, agregalo a `stated_totals` para
-que entre en el control de `reconcile.py`.
+usando `extract_rows()` de `base.py`. Después:
+
+- registralo en `BANCOS` de `server.py` (con su subcarpeta) y en `pick_parser`
+  de `ingest.py`, y sumá sus señas a `clasificar_texto` para la detección;
+- si el resumen declara algún total, dejalo en `stated_totals` para que entre
+  en el control de `reconcile.py`.
+
+`bna_visa.py` es un buen ejemplo reciente: mismo banco que `bna.py` pero otro
+layout, con su propia reconciliación por saldo.
 
 ## Dependencias
 
+Están en `analizador/requirements.txt` (`pdfplumber`, `flask`, `waitress` y
+`openpyxl` para la exportación a Excel):
+
 ```bash
-pip install pdfplumber
+pip install -r analizador/requirements.txt
 ```
