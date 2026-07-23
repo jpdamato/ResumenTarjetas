@@ -1,0 +1,84 @@
+{
+  "_comentario": [
+    "Reglas para agrupar consumos en categorias. Se evaluan EN ORDEN y gana",
+    "la primera que coincide, asi que conviene poner lo especifico arriba.",
+    "Los patrones son expresiones regulares, sin acentos y en MAYUSCULAS",
+    "(la descripcion se normaliza antes de comparar).",
+    "Editar este archivo y volver a correr: python ingest.py --recategorizar"
+  ],
+  "reglas": [
+    { "categoria": "Seguros", "patrones": ["ZURICH", "COOPSEGUROS", "SEGURO", "\\bLA CAJA\\b"] },
+
+    { "categoria": "Supermercado", "patrones": [
+      "CARREFOUR", "MONARCA", "\\bCOTO\\b", "\\bDIA\\b", "\\bJUMBO\\b", "\\bVEA\\b",
+      "\\bLA ANONIMA\\b", "MAXICONSUMO", "SUPERMERCAD", "COOPERATIVA OBRERA"
+    ]},
+
+    { "categoria": "Gastronomia y delivery", "patrones": [
+      "PEDIDOSYA", "RAPPI", "MOSTAZA", "MCDONALD", "BURGER", "STARBUCKS",
+      "GOLOPOLIS", "LA FATTORIA", "CHARCUTERIA", "\\bBAKE\\b", "SAGRADA",
+      "LA ALDEA", "LA ALEMANA", "RESTAURANT", "PARRILLA", "CAFE", "HELADER"
+    ]},
+
+    { "categoria": "Combustible y auto", "patrones": [
+      "PETROGAS", "AXION", "SHELLBOX", "\\bSHELL\\b", "\\bYPF\\b", "\\bPUMA\\b",
+      "NEUMATI", "ARENASNEUMATI", "LUBRICENTRO", "GOMERIA", "DAIHATSU", "REPUESTO"
+    ]},
+
+    { "categoria": "Servicios y hogar", "patrones": [
+      "CAMUZZI", "\\bEDEA\\b", "\\bEDEN\\b", "TUENTI", "RECARGA", "PERSONAL",
+      "MOVISTAR", "CLARO", "TELECENTRO", "FIBERTEL", "\\bUTANDIL\\b", "COOPERATIVA"
+    ]},
+
+    { "categoria": "Suscripciones y digital", "patrones": [
+      "SPOTIFY", "NETFLIX", "AMAZON PRIME", "AMZN DIGITAL", "PLAYSTATION",
+      "GOOGLE", "APPLE", "MICROSOFT", "DIRECTV", "\\bHBO\\b", "DISNEY",
+      "OPENAI", "ANTHROPIC", "CLAUDE", "YOUTUBE", "DROPBOX", "ADOBE",
+      "\\bHBO", "\\bMAX\\b", "PARAMOUNT", "\\bFLOW\\b"
+    ]},
+
+    { "categoria": "Electro y tecnologia", "patrones": [
+      "SAMSUNG", "TECHNO", "FRAVEGA", "ELECTRONICAFL", "BIDCOM", "GARBARINO",
+      "MUSIMUNDO", "COMPUMUNDO", "NOTEBOOK", "CELULAR", "MASQUESILLAS"
+    ]},
+
+    { "categoria": "Indumentaria y deportes", "patrones": [
+      "\\bNIKE", "ADIDAS", "OPEN SPORTS", "TIZA JEANS", "LE UTTHE",
+      "\\bTM TANDIL\\b", "GOLDENBIKE", "INDUMENTARIA", "CALZADO", "\\bZARA\\b",
+      "JOYERIA", "SANMALEM"
+    ]},
+
+    { "categoria": "Salud y cuidado", "patrones": [
+      "FARMACIA", "PERFUMERIA", "OPTICA", "ODONTOL", "MEDIC", "LABORATORIO",
+      "REGENERAR", "ENTRENO", "GIMNASIO", "\\bGYM\\b"
+    ]},
+
+    { "categoria": "Viajes y transporte", "patrones": [
+      "\\bUBER\\b", "CABIFY", "DIDI", "AVIANCA", "AEROLINEAS", "LATAM",
+      "AA2000", "DUTY FREE", "SMILES", "TAXFREE", "PLANETTAX", "DESPEGAR",
+      "BOOKING", "AIRBNB", "HOTEL", "PASAJE"
+    ]},
+
+    { "categoria": "Entretenimiento y eventos", "patrones": [
+      "TICKETPASS", "TUENTRADA", "GRAN REX", "TICKETEK", "BALNEARIO",
+      "\\bCINE\\b", "TEATRO", "LEGIONEXTRANJ"
+    ]},
+
+    { "categoria": "Hogar y construccion", "patrones": [
+      "MAXIMATERIALES", "PINTURERIA", "FERRETERIA", "HERRAMIENTAS",
+      "CORRALON", "SANITARIOS", "MUEBLE", "SODIMAC", "EASY"
+    ]},
+
+    { "categoria": "Marketplace", "patrones": [
+      "MERCADOLIBRE", "\\bMELI\\b", "\\bAMAZON\\b", "\\bEBAY\\b",
+      "ALIEXPRESS", "SHEIN", "TEMU", "PRODUCTOS?$", "\\d+PRODUCTOS"
+    ]},
+
+    { "categoria": "Costos de la tarjeta", "patrones": [
+      "INTERES", "\\bIVA\\b", "I\\.V\\.A", "IMPUESTO", "SELLOS", "COM\\.",
+      "COMISION", "PLAN V", "CARGO", "RENOVACION", "ADM\\.DE\\.CUENTA",
+      "\\bIIBB\\b", "\\bPERCEP", "\\bDB\\.?RG\\b", "\\bRG\\s*\\d{3,}"
+    ]}
+  ],
+  "categoria_por_defecto": "Otros"
+}

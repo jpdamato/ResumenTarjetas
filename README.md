@@ -1,0 +1,211 @@
+# Análisis de resúmenes de tarjeta
+
+Convierte los PDFs de los resúmenes (Santander VISA y BNA Nativa Mastercard) en
+una base SQLite local y genera un tablero HTML interactivo con gráficos, grilla
+filtrable y totales.
+
+Todo corre local: los PDFs, la base y el tablero no salen de esta carpeta.
+
+## Uso con Docker (un solo comando)
+
+```bash
+docker compose up --build
+```
+
+Y entrás a **http://localhost:8080**. Eso hace todo: carga los PDFs, controla
+que cuadren, genera el tablero y lo sirve.
+
+```bash
+docker compose up          # recarga lo que haya nuevo
+docker compose down        # para todo
+```
+
+### Agregar un resumen desde la web
+
+Arrastrá el PDF (o varios) al recuadro **"Agregar resúmenes"** arriba de todo.
+Podés dejar el banco en *Detectar solo* o elegirlo a mano.
+
+El PDF se procesa en el momento y el tablero se actualiza solo, **sin perder
+los filtros que tengas puestos**. Cada archivo se informa por separado, así que
+si uno falla los demás igual entran.
+
+Antes de guardar nada, el servidor verifica que:
+
+- sea realmente un PDF (por su contenido, no por la extensión);
+- el banco elegido coincida con el del PDF — si no, corta y avisa. Parsear un
+  resumen con el parser del otro banco no da error: da números mal;
+- se pueda leer y tenga movimientos;
+- cuadre con los totales que declara. Si no cuadra, igual se carga pero queda
+  marcado en rojo.
+
+Los PDFs que subís se guardan en `santander/` o `bna/`, junto a los demás. Subir
+dos veces el mismo resumen no duplica nada.
+
+También podés seguir copiando los PDFs a mano a esas carpetas y reiniciar el
+contenedor: las dos formas funcionan.
+
+Queda en `salida/`: la base `tarjetas.db` y una copia de `tablero.html`.
+
+Detalles de cómo está armado:
+
+- Los PDFs **no entran en la imagen** (están en `.dockerignore`), así que la
+  imagen no lleva adentro tus movimientos.
+- Por HTTP se publican **solo** la página y `/api/…`. La base **nunca** se
+  sirve: si estuviera en la carpeta publicada, cualquiera que abriera la página
+  podría bajarse `tarjetas.db` con todo el detalle.
+- Las carpetas de PDFs se montan **con escritura**, porque es donde se guardan
+  los resúmenes que subís. Antes de agregar la subida estaban de solo lectura;
+  es la contracara de tener esa función.
+- Recargar un PDF ya cargado no duplica nada, así que levantar el contenedor
+  varias veces es seguro.
+
+> El servidor no tiene usuarios ni contraseña, y `docker-compose.yml` publica el
+> puerto en todas las interfaces. En tu máquina está bien, pero **no lo expongas
+> a internet así**: cualquiera que llegue al puerto ve todos tus movimientos y
+> puede subir archivos. Para dejarlo solo local, cambiá el mapeo a
+> `"127.0.0.1:8080:8080"`.
+
+Para cambiar el puerto, editá `PUERTO` y el mapeo `ports` en
+`docker-compose.yml`.
+
+## Uso sin Docker
+
+```bash
+pip install -r analizador/requirements.txt
+cd analizador
+
+python ingest.py            # lee ../santander y ../bna -> tarjetas.db
+python dashboard.py         # genera ../tablero.html
+```
+
+Después abrí `tablero.html` con doble clic (los datos van incrustados en el
+archivo, así que no necesita servidor).
+
+| Comando | Para qué |
+|---|---|
+| `python ingest.py` | carga los PDFs nuevos |
+| `python ingest.py --reset` | recarga todo desde cero (conserva las categorías corregidas a mano) |
+| `python ingest.py --recategorizar` | reaplica `categories.json` sin releer los PDFs |
+| `python ingest.py --carpeta RUTA` | carga desde otra carpeta |
+| `python dashboard.py` | regenera el tablero |
+
+## Cómo se leen los importes (y por qué)
+
+Los resúmenes **no se pueden leer como texto plano**. La moneda de un importe
+está determinada por la *columna* en la que aparece, y la extracción de texto
+plana pierde esa información: `pdftotext -layout` llegaba a asignarle a Spotify
+un importe en pesos que en realidad era de otra fila.
+
+Por eso los parsers trabajan con coordenadas (`pdfplumber`): agrupan palabras en
+filas por su posición vertical y clasifican los importes por su **borde
+derecho**, que es estable porque los números están alineados a la derecha.
+
+### El control que hace confiable todo lo demás
+
+Cada resumen declara sus propios totales. Después de parsear, `reconcile.py`
+compara lo calculado contra lo declarado:
+
+```
+[OK ] Santander JUAN PABLO D AMATO ARS  declarado=2,211,614.43 calculado=2,211,614.43
+```
+
+Hoy **los 12 resúmenes cuadran al centavo**. Si alguno dejara de cuadrar,
+`ingest.py` lo avisa y el tablero muestra una advertencia rojo arriba de todo:
+es preferible saber que un mes está mal leído antes que mirar un gráfico
+equivocado en silencio.
+
+## Criterios de análisis
+
+- **Cuotas**: se cuenta la cuota del mes, no la compra completa. Los totales
+  mensuales coinciden con lo que efectivamente pagaste. Cada movimiento guarda
+  igual su fecha de compra original y el número de cuota.
+- **Monedas**: ARS y USD se muestran **siempre por separado**, nunca sumadas.
+  No se aplica ningún tipo de cambio.
+- **Tipos de movimiento**:
+  - `purchase` — consumo real en un comercio (los gráficos de gasto).
+  - `cost` — lo que cuesta la tarjeta: intereses, IVA, sellos, percepciones,
+    comisiones, planes de financiación. Se totaliza aparte.
+  - `payment` — pagos y créditos. **No son gasto**: se excluyen del análisis.
+- **Período**: es el mes de *cierre* del resumen, no el de vencimiento. Así los
+  dos bancos quedan alineados en el mismo mes.
+
+## Categorías
+
+`analizador/categories.json` tiene las reglas. Se evalúan en orden y gana la
+primera que coincide; los patrones son expresiones regulares que se comparan
+contra la descripción en mayúsculas y sin acentos.
+
+Hoy queda un **18,5 % de las compras en "Otros"**: son sobre todo comercios de
+Tandil que no se pueden clasificar sin conocerlos (`ARRAZOLA ROBERTO GAST`,
+`MAITILAC`, `CASASUSY`, `SILVESTRI SERGIO A`…).
+
+### Corregir una categoría desde la tabla
+
+En **Detalle de movimientos**, hacé clic en la categoría de cualquier fila y
+elegí otra (o *＋ Nueva categoría…* para inventar una).
+
+La corrección se guarda **por comercio**, no por movimiento: la categoría es una
+propiedad del comercio — si `MAITILAC` es gastronomía, lo es en todos los
+resúmenes. Entonces al corregir uno:
+
+- se actualizan todos los movimientos de ese comercio, y
+- los que entren en **resúmenes futuros** ya vienen con esa categoría.
+
+Las categorías corregidas a mano quedan marcadas en azul, y **ganan siempre**
+sobre `categories.json`: ni `--recategorizar` ni `--reset` las pisan. Si querés
+que el cambio valga para una sola fila (un comercio que mezcla rubros), tildá
+*"aplicar solo a ese movimiento"* antes de elegir.
+
+### Corregir con reglas
+
+Si preferís que la clasificación salga de una regla (sirve para familias enteras
+de comercios, tipo todo lo que empiece con `PEDIDOSYA`), agregá el patrón a
+`categories.json` y corré:
+
+```bash
+docker compose exec tarjetas python ingest.py --recategorizar
+# o, sin Docker:  python ingest.py --recategorizar && python dashboard.py
+```
+
+Ojo: un mismo comercio puede aparecer truncado de varias formas
+(`ARRAZOLA ROBERTO GA` y `ARRAZOLA ROBERTO GAST`), así que conviene usar un
+patrón corto que cubra las dos.
+
+## Estructura
+
+```
+santander/, bna/           PDFs de origen (una carpeta por banco)
+salida/                    base y tablero generados (cuando se usa Docker)
+tarjetas.db                base SQLite (cuando se corre sin Docker)
+tablero.html               tablero generado
+Dockerfile                 imagen
+docker-compose.yml         montajes, puerto y volúmenes
+docker/entrypoint.sh       carga -> genera -> sirve
+analizador/
+  server.py                web + API de subida (lo que corre en Docker)
+  ingest.py                CLI de carga
+  dashboard.py             genera el HTML autocontenido (sin servidor)
+  template.html            plantilla del tablero
+  reconcile.py             control contra los totales del PDF
+  categorize.py            normaliza comercios y aplica categorías
+  categories.json          reglas de categorías (editable)
+  db.py                    esquema SQLite
+  parsers/
+    base.py                filas por coordenadas, parseo de importes
+    model.py               modelo común y clasificación de tipo
+    santander.py           parser Santander VISA
+    bna.py                 parser BNA Nativa Mastercard
+```
+
+## Agregar otro banco
+
+Escribí un módulo en `parsers/` con una función `parse(path) -> Statement`,
+usando `extract_rows()` de `base.py`, y registralo en la lista `PARSERS` de
+`ingest.py`. Si el resumen declara algún total, agregalo a `stated_totals` para
+que entre en el control de `reconcile.py`.
+
+## Dependencias
+
+```bash
+pip install pdfplumber
+```

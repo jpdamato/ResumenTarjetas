@@ -1,0 +1,23 @@
+services:
+  tarjetas:
+    build: .
+    image: analisis-tarjetas
+    container_name: analisis-tarjetas
+    ports:
+      - "8080:8080"
+    volumes:
+      # Con escritura, porque los resumenes que se suben desde la web se
+      # guardan acá, junto a los que ya estaban. Es la contracara de tener
+      # la subida: el contenedor necesita poder escribir en estas carpetas.
+      # El nombre de la carpeta es lo que decide qué parser se usa.
+      - ./santander:/datos/santander
+      - ./bna:/datos/bna
+      # Salida persistente: la base y una copia offline del tablero.
+      - ./salida:/salida
+    environment:
+      PUERTO: "8080"
+      # Tambien las usan ingest.py y dashboard.py, para poder correrlos dentro
+      # del contenedor sin pasar rutas:
+      #   docker compose exec tarjetas python ingest.py --recategorizar
+      DATOS: /datos
+      BASE: /salida/tarjetas.db

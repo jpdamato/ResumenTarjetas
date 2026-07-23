@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resumen de tarjetas</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --plane: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;   /* compras */
+    --series-2: #eb6834;   /* costos de la tarjeta */
+    --critical: #d03b3b;
+    --good: #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --plane: #0d0d0d;
+      --text-primary: #ffffff; --text-secondary: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5; --series-2: #d95926; --good: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --plane: #0d0d0d;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --series-2: #d95926; --good: #0ca30c;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--plane); color: var(--text-primary);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 24px 20px 64px; }
+
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
+  h1 { font-size: 21px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); font-size: 13px; }
+  .spacer { flex: 1; }
+  button, select, input {
+    font: inherit; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--axis); }
+
+  .aviso {
+    margin: 16px 0 0; padding: 10px 14px; border-radius: 10px;
+    border: 1px solid var(--critical); color: var(--critical);
+    background: color-mix(in srgb, var(--critical) 8%, var(--surface-1));
+    font-size: 13px;
+  }
+
+  /* Una sola fila de filtros, arriba de todo lo que condiciona */
+  .filtros {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+    margin: 18px 0 20px; padding: 14px; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 12px;
+  }
+  .campo { display: flex; flex-direction: column; gap: 4px; }
+  .campo label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 14px; background: var(--surface-1); color: var(--text-secondary); }
+  .seg button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .tile .k { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .tile .v { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+  .tile .n { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+  .card.ancho { grid-column: 1 / -1; }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+  .card .h { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  @media (max-width: 860px) { .cards { grid-template-columns: 1fr; } }
+
+  .leyenda { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+  .leyenda i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 5px; }
+
+  svg { display: block; width: 100%; overflow: visible; }
+  .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .lbl { fill: var(--text-secondary); font-size: 12px; }
+  .val { fill: var(--text-primary); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .gl { stroke: var(--grid); stroke-width: 1; }
+  .ax { stroke: var(--axis); stroke-width: 1; }
+  .hit { fill: transparent; cursor: pointer; }
+  .hit:hover + .mark, .mark.on { opacity: .78; }
+
+  .tabla-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface-1); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: color-mix(in srgb, var(--series-1) 7%, transparent); }
+  tfoot td { font-weight: 600; border-top: 2px solid var(--axis); border-bottom: 0; }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+  button.pill { cursor: pointer; background: var(--surface-1); font-family: inherit; }
+  button.pill:hover { border-color: var(--series-1); color: var(--text-primary); }
+  button.pill::after { content: " ✎"; opacity: 0; font-size: 10px; }
+  button.pill:hover::after { opacity: .55; }
+  /* Marca discreta: esta categoría la corregiste vos, no salió de las reglas */
+  button.pill.manual { border-color: var(--series-1);
+    background: color-mix(in srgb, var(--series-1) 10%, var(--surface-1)); }
+  td select.editcat { font-size: 11px; padding: 2px 4px; max-width: 190px; }
+
+  /* Zona para arrastrar resumenes nuevos */
+  .subir { margin: 18px 0 0; padding: 16px; background: var(--surface-1);
+           border: 1px solid var(--border); border-radius: 12px; }
+  .subir h2 { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+  .soltar {
+    border: 1.5px dashed var(--axis); border-radius: 10px; padding: 22px 16px;
+    text-align: center; color: var(--text-secondary); cursor: pointer;
+    transition: border-color .12s, background .12s;
+  }
+  .soltar:hover, .soltar.encima { border-color: var(--series-1);
+    background: color-mix(in srgb, var(--series-1) 8%, transparent); }
+  .soltar.encima { border-style: solid; }
+  .soltar b { color: var(--text-primary); }
+  .subir-fila { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+  .estado { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .item { font-size: 13px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); }
+  .item.ok { border-color: var(--good); color: var(--good); }
+  .item.mal { border-color: var(--critical); color: var(--critical); }
+  .item.trabajando { color: var(--text-secondary); }
+
+  #tip {
+    position: fixed; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: var(--surface-1); border: 1px solid var(--axis); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.14); z-index: 9;
+    max-width: 260px;
+  }
+  #tip b { font-variant-numeric: tabular-nums; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: var(--surface-1); border: 1px solid var(--axis); border-radius: 10px;
+    padding: 10px 16px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.18);
+    opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 10;
+    max-width: min(560px, 92vw);
+  }
+  #toast.ver { opacity: 1; }
+  #toast.mal { border-color: var(--critical); color: var(--critical); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Resumen de tarjetas de crédito</h1>
+    <span class="sub" id="sub"></span>
+    <span class="spacer"></span>
+    <button id="tema" type="button">Tema</button>
+  </header>
+
+  <div id="aviso"></div>
+
+  <section class="subir" id="subir" hidden>
+    <h2>Agregar resúmenes</h2>
+    <div class="subir-fila">
+      <div class="campo">
+        <label for="banco-subida">Banco del resumen</label>
+        <select id="banco-subida">
+          <option value="auto">Detectar solo</option>
+          <option value="santander">Santander VISA</option>
+          <option value="bna">BNA Nativa Mastercard</option>
+        </select>
+      </div>
+    </div>
+    <div class="soltar" id="soltar" role="button" tabindex="0"
+         aria-label="Arrastrá PDFs acá o hacé clic para elegirlos">
+      Arrastrá acá los PDFs de los resúmenes<br>
+      <b>o hacé clic para elegirlos</b>
+    </div>
+    <input type="file" id="archivo" accept="application/pdf,.pdf" multiple hidden>
+    <div class="estado" id="estado"></div>
+  </section>
+
+  <div class="filtros">
+    <div class="campo">
+      <label>Moneda</label>
+      <div class="seg" id="moneda">
+        <button type="button" data-v="ARS" aria-pressed="true">ARS</button>
+        <button type="button" data-v="USD" aria-pressed="false">USD</button>
+      </div>
+    </div>
+    <div class="campo"><label>Desde</label><select id="desde"></select></div>
+    <div class="campo"><label>Hasta</label><select id="hasta"></select></div>
+    <div class="campo"><label>Banco</label><select id="banco"></select></div>
+    <div class="campo"><label>Tarjeta / titular</label><select id="titular"></select></div>
+    <div class="campo"><label>Categoría</label><select id="categoria"></select></div>
+    <div class="campo" style="flex:1; min-width:180px;">
+      <label>Buscar comercio</label>
+      <input id="buscar" type="search" placeholder="ej. carrefour, uber…" style="width:100%">
+    </div>
+    <button id="limpiar" type="button">Limpiar</button>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="cards">
+    <div class="card ancho">
+      <h2>Gasto por mes</h2>
+      <div class="h" id="h-mes"></div>
+      <div class="leyenda">
+        <span><i style="background:var(--series-1)"></i>Compras</span>
+        <span><i style="background:var(--series-2)"></i>Costos de la tarjeta</span>
+      </div>
+      <div id="c-mes"></div>
+    </div>
+    <div class="card">
+      <h2>Por categoría</h2>
+      <div class="h" id="h-cat"></div>
+      <div id="c-cat"></div>
+    </div>
+    <div class="card">
+      <h2>Top comercios</h2>
+      <div class="h" id="h-com"></div>
+      <div id="c-com"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Detalle de movimientos</h2>
+    <div class="h" id="h-tabla">Clic en una columna para ordenar</div>
+    <div class="h" id="h-editar" hidden>
+      Clic en una categoría para corregirla.
+      <label style="margin-left:8px">
+        <input type="checkbox" id="solo-este">
+        aplicar solo a ese movimiento y no a todo el comercio
+      </label>
+    </div>
+    <div class="tabla-wrap">
+      <table id="tabla">
+        <thead><tr>
+          <th data-k="f">Fecha</th><th data-k="p">Período</th>
+          <th data-k="d">Descripción</th><th data-k="cat">Categoría</th>
+          <th data-k="cu">Cuota</th><th data-k="tit">Titular</th>
+          <th data-k="b">Banco</th><th data-k="imp" class="num">Importe</th>
+        </tr></thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+<div id="tip" role="status"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script id="datos" type="application/json">__DATA__</script>
+<script>
+// Los datos vienen incrustados en la pagina. Cuando la sirve server.py ademas
+// se pueden volver a pedir por /api/datos, asi al subir un resumen se refresca
+// todo sin recargar ni perder los filtros puestos.
+let DATA = JSON.parse(document.getElementById('datos').textContent);
+let MOV = DATA.movimientos;
+const CON_API = __API__;
+const $ = s => document.querySelector(s);
+const tip = $('#tip');
+
+// ---- estado de filtros -----------------------------------------------------
+const st = { moneda:'ARS', desde:'', hasta:'', banco:'', titular:'', categoria:'', q:'',
+             orden:'f', asc:false };
+
+let periodos = [];
+
+const fmt = (v, mon) => (mon === 'USD' ? 'U$S ' : '$ ') +
+  v.toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2});
+// Un decimal mientras la magnitud sea chica, para que dos marcas seguidas del
+// eje no colapsen en la misma etiqueta (1500 y 2000 mostrandose los dos "2k").
+const fmtCorto = v => {
+  const a = Math.abs(v);
+  if (a >= 1e6) return (v/1e6).toLocaleString('es-AR',{maximumFractionDigits:a<1e7?1:0})+'M';
+  if (a >= 1e3) return (v/1e3).toLocaleString('es-AR',{maximumFractionDigits:a<1e4?1:0})+'k';
+  return v.toLocaleString('es-AR',{maximumFractionDigits:0});
+};
+
+function opciones(sel, valores, todos) {
+  // Se conserva lo elegido si sigue existiendo despues de recargar los datos.
+  const previo = sel.value;
+  sel.innerHTML = (todos ? `<option value="">${todos}</option>` : '') +
+    valores.map(v => `<option value="${v}">${v}</option>`).join('');
+  if (previo && valores.includes(previo)) sel.value = previo;
+}
+
+// Rearma los filtros y la cabecera a partir de DATA. Se llama al inicio y cada
+// vez que se suma un resumen nuevo.
+function poblarFiltros() {
+  periodos = [...new Set(MOV.map(m => m.p))].sort();
+  const dentro = p => periodos.includes(p);
+  if (!dentro(st.desde)) st.desde = periodos[0];
+  if (!dentro(st.hasta)) st.hasta = periodos[periodos.length-1];
+
+  opciones($('#desde'), periodos); opciones($('#hasta'), periodos);
+  $('#desde').value = st.desde; $('#hasta').value = st.hasta;
+  opciones($('#banco'), [...new Set(MOV.map(m=>m.b))].sort(), 'Todos');
+  opciones($('#titular'), [...new Set(MOV.map(m=>m.tit).filter(Boolean))].sort(), 'Todos');
+  opciones($('#categoria'), [...new Set(MOV.map(m=>m.cat))].sort(), 'Todas');
+
+  const malos = DATA.resumenes.filter(r => !r.control_ok);
+  $('#aviso').innerHTML = malos.length
+    ? `<div class="aviso"><b>Atención:</b> ${malos.length} resumen(es) no
+       cuadran con los totales que declara el PDF
+       (${malos.map(r=>r.banco+' '+r.periodo).join(', ')}).
+       Los importes de esos períodos pueden estar incompletos.</div>`
+    : '';
+  $('#sub').textContent = `${MOV.length} movimientos · ${periodos.length} períodos`
+    + ` · generado ${DATA.generado}`;
+}
+
+// ---- filtrado --------------------------------------------------------------
+// Los pagos nunca son gasto: se excluyen siempre del analisis.
+function filtrar() {
+  const q = st.q.trim().toLowerCase();
+  return MOV.filter(m =>
+    m.t !== 'payment' &&
+    m.mon === st.moneda &&
+    m.p >= st.desde && m.p <= st.hasta &&
+    (!st.banco || m.b === st.banco) &&
+    (!st.titular || m.tit === st.titular) &&
+    (!st.categoria || m.cat === st.categoria) &&
+    (!q || m.d.toLowerCase().includes(q) || m.c.toLowerCase().includes(q))
+  );
+}
+
+const suma = a => a.reduce((s,m) => s + m.imp, 0);
+
+// ---- tooltip ---------------------------------------------------------------
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+const hideTip = () => tip.style.opacity = 0;
+
+function bindTip(svg, sel) {
+  svg.querySelectorAll(sel).forEach(el => {
+    el.addEventListener('mousemove', e => showTip(e, el.dataset.tip));
+    el.addEventListener('mouseleave', hideTip);
+    el.setAttribute('tabindex', '0');
+    el.addEventListener('focus', e => {
+      const b = el.getBoundingClientRect();
+      showTip({clientX:b.left+b.width/2, clientY:b.top}, el.dataset.tip);
+    });
+    el.addEventListener('blur', hideTip);
+  });
+}
+
+// ---- grafico de barras apiladas por mes ------------------------------------
+function chartMes(rows) {
+  const W = 1180, H = 260, L = 58, R = 12, T = 10, B = 34;
+  const porMes = new Map();
+  for (const p of periodos) {
+    if (p < st.desde || p > st.hasta) continue;
+    porMes.set(p, {compras:0, costos:0});
+  }
+  for (const m of rows) {
+    const e = porMes.get(m.p); if (!e) continue;
+    if (m.t === 'cost') e.costos += m.imp; else e.compras += m.imp;
+  }
+  const meses = [...porMes.keys()];
+  const max = Math.max(1, ...meses.map(p => porMes.get(p).compras + porMes.get(p).costos));
+  const paso = Math.pow(10, Math.floor(Math.log10(max)));
+  const top = Math.ceil(max / paso) * paso;
+  const iw = W - L - R, ih = H - T - B;
+  const bw = Math.min(58, iw / Math.max(meses.length,1) * 0.62);
+  const x = i => L + iw * (i + 0.5) / Math.max(meses.length,1);
+  const y = v => T + ih - (v / top) * ih;
+
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gasto por mes">`;
+  for (let g = 0; g <= 4; g++) {
+    const v = top * g / 4, yy = y(v);
+    s += `<line class="gl" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/>`;
+    s += `<text class="tick" x="${L-8}" y="${yy+4}" text-anchor="end">${fmtCorto(v)}</text>`;
+  }
+  meses.forEach((p, i) => {
+    const e = porMes.get(p), cx = x(i);
+    const hC = (e.compras / top) * ih, hK = (e.costos / top) * ih;
+    const yC = y(e.compras);
+    // 2px de separacion entre segmentos apilados, en vez de un borde
+    if (e.compras > 0)
+      s += `<rect class="mark" x="${cx-bw/2}" y="${yC}" width="${bw}" height="${Math.max(hC,1)}" rx="4" fill="var(--series-1)"/>`;
+    if (e.costos > 0)
+      s += `<rect class="mark" x="${cx-bw/2}" y="${y(e.compras+e.costos)}" width="${bw}" height="${Math.max(hK-2,1)}" rx="4" fill="var(--series-2)"/>`;
+    s += `<rect class="hit" x="${cx-bw/2-4}" y="${T}" width="${bw+8}" height="${ih}"
+           data-tip="<b>${p}</b><br>Compras: <b>${fmt(e.compras, st.moneda)}</b><br>Costos: <b>${fmt(e.costos, st.moneda)}</b><br>Total: <b>${fmt(e.compras+e.costos, st.moneda)}</b>"/>`;
+    s += `<text class="tick" x="${cx}" y="${H-14}" text-anchor="middle">${p.slice(2)}</text>`;
+  });
+  s += `<line class="ax" x1="${L}" y1="${T+ih}" x2="${W-R}" y2="${T+ih}"/></svg>`;
+  return s;
+}
+
+// ---- barras horizontales (una sola serie => un solo color) -----------------
+function chartBarras(pares, alto) {
+  const W = 560, L = 150, R = 74, T = 4, fila = 26;
+  const H = Math.max(alto, pares.length * fila + 10);
+  const max = Math.max(1, ...pares.map(p => p[1]));
+  const iw = W - L - R;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+  pares.forEach(([k, v], i) => {
+    const yy = T + i * fila, w = Math.max((v / max) * iw, 2);
+    const corto = k.length > 21 ? k.slice(0, 20) + '…' : k;
+    s += `<text class="lbl" x="${L-10}" y="${yy+14}" text-anchor="end">${corto}</text>`;
+    s += `<rect class="mark" x="${L}" y="${yy+4}" width="${w}" height="13" rx="4" fill="var(--series-1)"/>`;
+    s += `<text class="val" x="${L+w+8}" y="${yy+15}">${fmtCorto(v)}</text>`;
+    s += `<rect class="hit" x="0" y="${yy}" width="${W}" height="${fila}"
+           data-tip="<b>${k}</b><br>${fmt(v, st.moneda)}"/>`;
+  });
+  return s + '</svg>';
+}
+
+// Devuelve el ranking completo. El recorte lo decide quien llama: en un "top N"
+// NO se agrega una barra "Otros" con el resto acumulado, porque esa barra es
+// siempre la mas larga y aplasta la escala de las que se quieren comparar.
+function agrupar(rows, campo) {
+  const m = new Map();
+  for (const r of rows) m.set(r[campo], (m.get(r[campo]) || 0) + r.imp);
+  return [...m.entries()].sort((a,b) => b[1]-a[1]);
+}
+
+// ---- tabla -----------------------------------------------------------------
+function pintarTabla(rows) {
+  const k = st.orden, dir = st.asc ? 1 : -1;
+  const orden = [...rows].sort((a,b) => {
+    let va = a[k] ?? '', vb = b[k] ?? '';
+    if (k === 'cu') { va = a.cn||0; vb = b.cn||0; }
+    return va < vb ? -dir : va > vb ? dir : 0;
+  });
+  const tb = $('#tabla tbody');
+  tb.innerHTML = orden.slice(0, 600).map(m => `<tr>
+    <td>${m.f || '—'}</td><td>${m.p}</td>
+    <td title="${m.d}">${m.d.length > 34 ? m.d.slice(0,33)+'…' : m.d}</td>
+    <td>${CON_API
+      ? `<button class="pill${m.cm ? ' manual' : ''}" data-cat-id="${m.id}"
+                title="Clic para corregir la categoría de ${m.c}">${m.cat}</button>`
+      : `<span class="pill">${m.cat}</span>`}</td>
+    <td>${m.cn ? m.cn + '/' + m.ct : ''}</td>
+    <td>${m.tit || ''}</td><td>${m.b}</td>
+    <td class="num" style="${m.t==='cost' ? 'color:var(--series-2)' : ''}">${fmt(m.imp, m.mon)}</td>
+  </tr>`).join('');
+  $('#tabla tfoot').innerHTML = `<tr><td colspan="7">Total (${rows.length} movimientos${
+    rows.length > 600 ? ', se muestran 600' : ''})</td>
+    <td class="num">${fmt(suma(rows), st.moneda)}</td></tr>`;
+}
+
+// ---- render ----------------------------------------------------------------
+function render() {
+  const rows = filtrar();
+  const compras = rows.filter(m => m.t === 'purchase');
+  const costos  = rows.filter(m => m.t === 'cost');
+  const nMeses = new Set(rows.map(m => m.p)).size || 1;
+
+  $('#tiles').innerHTML = [
+    ['Compras', fmt(suma(compras), st.moneda), compras.length + ' movimientos'],
+    ['Costos de la tarjeta', fmt(suma(costos), st.moneda), 'intereses, IVA, sellos, comisiones'],
+    ['Promedio por mes', fmt((suma(compras)+suma(costos))/nMeses, st.moneda), nMeses + ' meses en el filtro'],
+    ['Total', fmt(suma(rows), st.moneda), 'compras + costos'],
+  ].map(([k,v,n]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join('');
+
+  $('#h-mes').textContent = `Compras y costos por período de cierre, en ${st.moneda}`;
+  $('#c-mes').innerHTML = chartMes(rows);
+
+  const cats = agrupar(compras, 'cat');
+  const coms = agrupar(compras, 'c');
+  const TOPC = 12;
+  $('#c-cat').innerHTML = chartBarras(cats, 200);
+  $('#c-com').innerHTML = chartBarras(coms.slice(0, TOPC), 200);
+  $('#h-cat').textContent = `${cats.length} categorías, ordenadas por gasto`;
+  $('#h-com').textContent = coms.length > TOPC
+    ? `Los ${TOPC} de mayor gasto, de ${coms.length} comercios`
+    : `${coms.length} comercios`;
+  bindTip($('#c-mes'), '.hit'); bindTip($('#c-cat'), '.hit'); bindTip($('#c-com'), '.hit');
+
+  pintarTabla(rows);
+}
+
+// ---- eventos ---------------------------------------------------------------
+$('#moneda').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  st.moneda = b.dataset.v;
+  [...e.currentTarget.children].forEach(x => x.setAttribute('aria-pressed', x === b));
+  render();
+});
+const bind = (sel, campo) => $(sel).addEventListener('change', e => { st[campo] = e.target.value; render(); });
+bind('#desde','desde'); bind('#hasta','hasta'); bind('#banco','banco');
+bind('#titular','titular'); bind('#categoria','categoria');
+$('#buscar').addEventListener('input', e => { st.q = e.target.value; render(); });
+$('#limpiar').addEventListener('click', () => {
+  st.banco = st.titular = st.categoria = st.q = '';
+  st.desde = periodos[0]; st.hasta = periodos[periodos.length-1];
+  $('#banco').value=''; $('#titular').value=''; $('#categoria').value='';
+  $('#buscar').value=''; $('#desde').value=st.desde; $('#hasta').value=st.hasta;
+  render();
+});
+document.querySelectorAll('#tabla th').forEach(th => th.addEventListener('click', () => {
+  const k = th.dataset.k;
+  if (st.orden === k) st.asc = !st.asc; else { st.orden = k; st.asc = false; }
+  render();
+}));
+$('#tema').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+});
+
+// ---- subir resumenes -------------------------------------------------------
+// Solo tiene sentido con el servidor detras; si el HTML se abrio como archivo
+// suelto no hay a donde subir, asi que la seccion queda oculta.
+let avisoTimer;
+function avisar(texto, mal) {
+  const t = $('#toast');
+  t.textContent = texto;
+  t.className = 'ver' + (mal ? ' mal' : '');
+  clearTimeout(avisoTimer);
+  avisoTimer = setTimeout(() => t.className = '', mal ? 6000 : 4000);
+}
+
+if (CON_API) {
+  $('#subir').hidden = false;
+  $('#h-editar').hidden = false;
+  const zona = $('#soltar'), input = $('#archivo'), estado = $('#estado');
+
+  const nota = (texto, clase) => {
+    const el = document.createElement('div');
+    el.className = 'item ' + clase;
+    el.textContent = texto;
+    estado.prepend(el);
+    return el;
+  };
+
+  async function subir(archivos) {
+    const pdfs = [...archivos].filter(f => /\.pdf$/i.test(f.name));
+    const noPdf = [...archivos].filter(f => !/\.pdf$/i.test(f.name));
+    noPdf.forEach(f => nota(`${f.name}: no es un PDF, se omite.`, 'mal'));
+    if (!pdfs.length) return;
+
+    let hubo = false;
+    // De a uno: cada resumen se procesa y se controla por separado, y si uno
+    // falla los demas igual entran.
+    for (const f of pdfs) {
+      const linea = nota(`${f.name}: procesando…`, 'trabajando');
+      try {
+        const fd = new FormData();
+        fd.append('archivo', f);
+        fd.append('banco', $('#banco-subida').value);
+        const r = await fetch('api/subir', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (j.ok) {
+          linea.className = 'item ' + (j.control_ok ? 'ok' : 'mal');
+          linea.textContent = `${f.name} → ${j.mensaje}`;
+          hubo = true;
+        } else {
+          linea.className = 'item mal';
+          linea.textContent = `${f.name} → ${j.error}`;
+        }
+      } catch (e) {
+        linea.className = 'item mal';
+        linea.textContent = `${f.name} → no se pudo subir (${e.message})`;
+      }
+    }
+    if (hubo) await recargar();
+  }
+
+  async function recargar() {
+    const r = await fetch('api/datos');
+    DATA = await r.json();
+    MOV = DATA.movimientos;
+    poblarFiltros();
+    render();
+  }
+
+  // ---- corregir la categoría desde la tabla ----
+  // Delegado en el tbody porque la tabla se vuelve a dibujar entera en cada
+  // filtro y los botones de antes dejan de existir.
+  $('#tabla tbody').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-cat-id]');
+    if (btn) abrirEditor(btn);
+  });
+
+  function abrirEditor(btn) {
+    const id = +btn.dataset.catId;
+    const mov = MOV.find(m => m.id === id);
+    if (!mov) return;
+    const celda = btn.parentElement;
+    const sel = document.createElement('select');
+    sel.className = 'editcat';
+    sel.innerHTML = (DATA.categorias || []).map(c =>
+        `<option${c === mov.cat ? ' selected' : ''}>${c}</option>`).join('')
+      + '<option value="__nueva__">＋ Nueva categoría…</option>';
+    celda.replaceChildren(sel);
+    sel.focus();
+
+    let resuelto = false;
+    const cerrar = () => { if (!resuelto) { resuelto = true; pintarTabla(filtrar()); } };
+    sel.addEventListener('blur', cerrar);
+    sel.addEventListener('keydown', ev => { if (ev.key === 'Escape') cerrar(); });
+    sel.addEventListener('change', async () => {
+      if (resuelto) return;
+      resuelto = true;
+      let cat = sel.value;
+      if (cat === '__nueva__') {
+        cat = (prompt('Nombre de la nueva categoría:') || '').trim();
+        if (!cat) { pintarTabla(filtrar()); return; }
+      }
+      if (cat === mov.cat) { pintarTabla(filtrar()); return; }
+      await guardarCategoria(id, cat);
+    });
+  }
+
+  async function guardarCategoria(id, categoria) {
+    try {
+      const r = await fetch('api/categoria', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, categoria, solo_este: $('#solo-este').checked }),
+      });
+      const j = await r.json();
+      if (!j.ok) { avisar(j.error, true); pintarTabla(filtrar()); return; }
+      await recargar();
+      avisar(j.mensaje);
+    } catch (e) {
+      avisar('No se pudo guardar el cambio: ' + e.message, true);
+      pintarTabla(filtrar());
+    }
+  }
+
+  zona.addEventListener('click', () => input.click());
+  zona.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
+  input.addEventListener('change', () => { subir(input.files); input.value = ''; });
+
+  // dragover hay que cancelarlo si o si, si no el navegador abre el PDF.
+  ['dragenter','dragover'].forEach(ev => zona.addEventListener(ev, e => {
+    e.preventDefault(); zona.classList.add('encima');
+  }));
+  ['dragleave','drop'].forEach(ev => zona.addEventListener(ev, e => {
+    e.preventDefault(); zona.classList.remove('encima');
+  }));
+  zona.addEventListener('drop', e => {
+    if (e.dataTransfer?.files?.length) subir(e.dataTransfer.files);
+  });
+  // Soltar fuera de la zona no debe reemplazar la pagina por el PDF.
+  ['dragover','drop'].forEach(ev =>
+    window.addEventListener(ev, e => { if (!zona.contains(e.target)) e.preventDefault(); }));
+}
+
+poblarFiltros();
+render();
+</script>
+</body>
+</html>
