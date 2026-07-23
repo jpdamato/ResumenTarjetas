@@ -17,7 +17,7 @@ COPY docker/entrypoint.sh /entrypoint.sh
 # y /bin/sh falla con un "not found" muy poco descriptivo.
 RUN sed -i 's/\r$//' /entrypoint.sh \
  && chmod +x /entrypoint.sh \
- && mkdir -p /web /salida /datos \
+ && mkdir -p /web /salida /datos /datos/usuarios \
  && useradd --create-home --uid 1000 app \
  && chown -R app:app /web /salida /datos /app
 

@@ -1,10 +1,15 @@
 """Carga los PDFs de resumenes a la base local.
 
+Los movimientos quedan asociados a un usuario. Sin `--usuario` se carga al
+usuario inicial, que es el dueño de los resumenes que estan en ../bna y
+../santander desde antes de que hubiera usuarios.
+
 Uso:
     python ingest.py                    # lee ../bna y ../santander
+    python ingest.py --usuario ana      # carga a nombre de otro usuario
     python ingest.py --carpeta ruta     # lee otra carpeta (recursivo)
     python ingest.py --recategorizar    # reaplica categories.json, sin releer PDFs
-    python ingest.py --reset            # borra la base y vuelve a cargar todo
+    python ingest.py --reset            # borra lo de ese usuario y recarga todo
 
 Cada resumen se controla contra los totales que declara el propio PDF. Si
 alguno no cuadra, se avisa: es preferible saber que un mes esta mal leido
@@ -18,6 +23,7 @@ import os
 import sys
 from pathlib import Path
 
+import auth
 import db
 from categorize import Categorizer
 from parsers import bna, santander
@@ -52,26 +58,41 @@ def main() -> int:
                     default=Path(os.environ.get("BASE", db.DEFAULT_DB)))
     ap.add_argument("--recategorizar", action="store_true",
                     help="reaplica categories.json a lo ya cargado")
-    ap.add_argument("--reset", action="store_true", help="borra la base primero")
+    ap.add_argument("--reset", action="store_true",
+                    help="borra los movimientos de ese usuario y recarga")
+    ap.add_argument("--usuario", default=os.environ.get("USUARIO"),
+                    help="a nombre de quien se carga (por defecto, el inicial)")
+    ap.add_argument("--excluir", type=Path, action="append", default=[],
+                    help="carpeta a saltear (se puede repetir)")
     args = ap.parse_args()
 
     categorizer = Categorizer()
     conn = db.connect(args.base)
+    try:
+        usuario_id = auth.resolver_usuario(conn, args.usuario)
+    except LookupError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    usuario = conn.execute("SELECT usuario FROM usuarios WHERE id = ?",
+                           (usuario_id,)).fetchone()["usuario"]
+    print(f"Usuario: {usuario}")
 
     if args.reset:
-        # Se vacian los movimientos, pero NO las correcciones de categoria: son
-        # trabajo manual que no se puede recuperar releyendo los PDFs.
-        # Para borrar todo de verdad, borra el archivo .db a mano.
-        conn.executescript("DELETE FROM movimientos; DELETE FROM resumenes;")
+        # Se vacian los movimientos de ESE usuario (los de los demas no se
+        # tocan), pero NO sus correcciones de categoria: son trabajo manual que
+        # no se puede recuperar releyendo los PDFs.
+        conn.execute("DELETE FROM movimientos WHERE usuario_id = ?", (usuario_id,))
+        conn.execute("DELETE FROM resumenes WHERE usuario_id = ?", (usuario_id,))
         conn.commit()
         quedan = conn.execute(
-            "SELECT COUNT(*) FROM categorias_manuales").fetchone()[0]
+            "SELECT COUNT(*) FROM categorias_manuales WHERE usuario_id = ?",
+            (usuario_id,)).fetchone()[0]
         print("Movimientos borrados, se recargan desde los PDFs.")
         if quedan:
             print(f"  ({quedan} correcciones de categoria se conservan)")
 
     if args.recategorizar:
-        r = db.recategorize(conn, categorizer)
+        r = db.recategorize(conn, usuario_id, categorizer)
         print(f"Recategorizados {r['total']} movimientos con las reglas actuales.")
         if r["manuales"]:
             print(f"  ({r['manuales']} conservan la categoria que corregiste a mano)")
@@ -81,6 +102,14 @@ def main() -> int:
         pdfs = sorted(args.carpeta.rglob("*.pdf"))
     else:
         pdfs = sorted(BASE.glob("*/*.pdf"))
+
+    # Las carpetas de otros usuarios cuelgan de la misma raiz, y cargar sus PDFs
+    # acá se los atribuiria al usuario equivocado: seria exactamente la fuga que
+    # los usuarios vienen a evitar.
+    excluidas = [e.resolve() for e in args.excluir]
+    if excluidas:
+        pdfs = [p for p in pdfs
+                if not any(e in p.resolve().parents for e in excluidas)]
 
     if not pdfs:
         print("No se encontraron PDFs.", file=sys.stderr)
@@ -106,19 +135,11 @@ def main() -> int:
         ok = all(c.ok for c in checks)
         detail = "\n".join(format_report(statement, checks))
 
-        inserted = db.insert_transactions(conn, statement.transactions, categorizer)
+        inserted = db.insert_transactions(conn, usuario_id,
+                                          statement.transactions, categorizer)
         total_new += inserted
 
-        conn.execute(
-            """INSERT OR REPLACE INTO resumenes
-               (banco, periodo, archivo, cierre, vencimiento, control_ok, control_txt)
-               VALUES (?,?,?,?,?,?,?)""",
-            (statement.bank, statement.period, str(pdf_path),
-             statement.close_date.isoformat() if statement.close_date else None,
-             statement.due_date.isoformat() if statement.due_date else None,
-             1 if ok else 0, detail),
-        )
-        conn.commit()
+        db.guardar_resumen(conn, usuario_id, statement, ok, detail, str(pdf_path))
 
         flag = "OK " if ok else "REVISAR"
         print(f"  {flag} {statement.bank:<10} {statement.period}  "
@@ -128,8 +149,10 @@ def main() -> int:
             print(detail)
             problemas.append(f"{statement.bank} {statement.period}")
 
-    n_total = conn.execute("SELECT COUNT(*) FROM movimientos").fetchone()[0]
-    print(f"\nMovimientos nuevos: {total_new}. Total en la base: {n_total}")
+    n_total = conn.execute(
+        "SELECT COUNT(*) FROM movimientos WHERE usuario_id = ?",
+        (usuario_id,)).fetchone()[0]
+    print(f"\nMovimientos nuevos: {total_new}. Total de {usuario}: {n_total}")
     print(f"Base: {args.base}")
 
     if problemas:

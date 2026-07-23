@@ -7,10 +7,12 @@ BASE="${BASE:-/salida/tarjetas.db}"
 WEB="${WEB:-/web}"
 PUERTO="${PUERTO:-8080}"
 
-mkdir -p "$(dirname "$BASE")" "$WEB"
+mkdir -p "$(dirname "$BASE")" "$WEB" "$DATOS/usuarios"
 
-echo "==> Cargando resumenes desde $DATOS"
-if ! python ingest.py --carpeta "$DATOS" --base "$BASE"; then
+# Solo las carpetas por banco: /datos/usuarios es de los demas usuarios y cada
+# uno carga las suyas al entrar, no se le pueden atribuir al usuario inicial.
+echo "==> Cargando resumenes del usuario inicial desde $DATOS"
+if ! python ingest.py --carpeta "$DATOS" --base "$BASE" --excluir "$DATOS/usuarios"; then
     if [ -f "$BASE" ]; then
         echo "!!  No se pudieron cargar PDFs nuevos. Sigo con la base ya cargada."
     else

@@ -12,10 +12,25 @@ services:
       # El nombre de la carpeta es lo que decide qué parser se usa.
       - ./santander:/datos/santander
       - ./bna:/datos/bna
+      # Los resumenes de los demas usuarios, cada uno en su carpeta. Se separan
+      # de las de arriba para que nadie vea los PDFs de otro.
+      - ./datos-usuarios:/datos/usuarios
       # Salida persistente: la base y una copia offline del tablero.
       - ./salida:/salida
     environment:
       PUERTO: "8080"
+      # Usuario que se crea la PRIMERA vez que arranca, y que queda dueño de
+      # todo lo que ya estaba cargado. Despues de eso no tiene efecto: para
+      # cambiarle la clave, `docker compose exec tarjetas python usuarios.py
+      # clave jpd`.
+      USUARIO_INICIAL: "jpd"
+      # CLAVE_INICIAL: por defecto la que definiste en analizador/auth.py. Si la
+      # ponés acá, escribí cada '$' duplicado ($$) o compose se lo come creyendo
+      # que es una variable.
+      #
+      # Con esto en "0" nadie mas puede crear su cuenta desde la web; los
+      # usuarios se crean con `python usuarios.py crear <nombre>`.
+      REGISTRO_ABIERTO: "1"
       # Tambien las usan ingest.py y dashboard.py, para poder correrlos dentro
       # del contenedor sin pasar rutas:
       #   docker compose exec tarjetas python ingest.py --recategorizar

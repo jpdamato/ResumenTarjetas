@@ -161,7 +161,9 @@
     <h1>Resumen de tarjetas de crédito</h1>
     <span class="sub" id="sub"></span>
     <span class="spacer"></span>
+    <span class="sub" id="quien"></span>
     <button id="tema" type="button">Tema</button>
+    <form method="post" action="salir" id="salir" hidden><button type="submit">Salir</button></form>
   </header>
 
   <div id="aviso"></div>
@@ -266,6 +268,9 @@
 let DATA = JSON.parse(document.getElementById('datos').textContent);
 let MOV = DATA.movimientos;
 const CON_API = __API__;
+// De quien son estos datos. Los movimientos que llegan acá son solo suyos: el
+// filtrado por usuario lo hace el servidor, no esta página.
+const USUARIO = __USUARIO__;
 const $ = s => document.querySelector(s);
 const tip = $('#tip');
 
@@ -531,7 +536,16 @@ function avisar(texto, mal) {
 if (CON_API) {
   $('#subir').hidden = false;
   $('#h-editar').hidden = false;
+  $('#salir').hidden = false;
   const zona = $('#soltar'), input = $('#archivo'), estado = $('#estado');
+
+  // Si la sesión venció, cualquier llamada vuelve 401: se manda al login en vez
+  // de dejar la página mostrando datos viejos que ya no se pueden guardar.
+  const vencida = r => {
+    if (r.status !== 401) return false;
+    location.href = 'login';
+    return true;
+  };
 
   const nota = (texto, clase) => {
     const el = document.createElement('div');
@@ -557,6 +571,7 @@ if (CON_API) {
         fd.append('archivo', f);
         fd.append('banco', $('#banco-subida').value);
         const r = await fetch('api/subir', { method: 'POST', body: fd });
+        if (vencida(r)) return;
         const j = await r.json();
         if (j.ok) {
           linea.className = 'item ' + (j.control_ok ? 'ok' : 'mal');
@@ -576,6 +591,7 @@ if (CON_API) {
 
   async function recargar() {
     const r = await fetch('api/datos');
+    if (vencida(r)) return;
     DATA = await r.json();
     MOV = DATA.movimientos;
     poblarFiltros();
@@ -627,6 +643,7 @@ if (CON_API) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, categoria, solo_este: $('#solo-este').checked }),
       });
+      if (vencida(r)) return;
       const j = await r.json();
       if (!j.ok) { avisar(j.error, true); pintarTabla(filtrar()); return; }
       await recargar();
@@ -658,6 +675,7 @@ if (CON_API) {
     window.addEventListener(ev, e => { if (!zona.contains(e.target)) e.preventDefault(); }));
 }
 
+$('#quien').textContent = USUARIO ? `Usuario: ${USUARIO}` : '';
 poblarFiltros();
 render();
 </script>

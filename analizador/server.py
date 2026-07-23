@@ -1,8 +1,19 @@
 """Servidor web: muestra el tablero y permite subir resumenes nuevos.
 
+Hay usuarios: cada uno entra con su usuario y contraseña y ve unicamente sus
+propios movimientos. Todo endpoint que toca datos pasa por @login_requerido, y
+todas las consultas van filtradas por `usuario_id` (ver db.py): no hay forma de
+llegar a los movimientos de otro cambiando un id en la URL.
+
 Endpoints:
-    GET  /              el tablero, con los datos actuales incrustados
-    GET  /api/datos     los movimientos en JSON (para refrescar sin recargar)
+    GET  /              el tablero del usuario logueado, con sus datos
+    GET  /login         formulario de acceso
+    POST /login         valida y abre la sesion
+    GET  /registro      formulario de alta (si REGISTRO_ABIERTO)
+    POST /registro      crea el usuario y lo deja adentro
+    POST /salir         cierra la sesion
+    GET  /api/datos     los movimientos del usuario en JSON
+    POST /api/categoria corrige la categoria de un movimiento suyo
     POST /api/subir     recibe un PDF + el banco, lo procesa y lo incorpora
 
 La base NUNCA se publica por HTTP: solo se sirven la pagina y estos endpoints.
@@ -10,14 +21,19 @@ La base NUNCA se publica por HTTP: solo se sirven la pagina y estos endpoints.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
+import time
+from functools import wraps
 from pathlib import Path
 
 import pdfplumber
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, redirect, request, url_for
+from markupsafe import escape
 
+import auth
 import db
 from categorize import Categorizer
 from dashboard import build_payload
@@ -27,6 +43,9 @@ from reconcile import check_statement, format_report
 DATOS = Path(os.environ.get("DATOS", "/datos"))
 BASE = Path(os.environ.get("BASE", "/salida/tarjetas.db"))
 TEMPLATE = Path(__file__).with_name("template.html")
+LOGIN_HTML = Path(__file__).with_name("login.html")
+
+COOKIE = "sesion"
 
 # Cada banco: su parser y como reconocerlo dentro del PDF.
 BANCOS = {
@@ -69,6 +88,177 @@ def error_inesperado(e):
 
 
 # --------------------------------------------------------------------------
+# sesion
+def login_requerido(f):
+    """Abre la base, exige sesion valida y deja al usuario en `g`.
+
+    La conexion se abre y se cierra por request: sqlite no comparte conexiones
+    entre hilos y waitress atiende con varios.
+    """
+    @wraps(f)
+    def envoltorio(*a, **kw):
+        conn = db.connect(BASE)
+        usuario = auth.usuario_de_sesion(conn, request.cookies.get(COOKIE))
+        if usuario is None:
+            conn.close()
+            if request.path.startswith("/api/"):
+                return jsonify(ok=False, login=True,
+                               error="La sesión venció. Volvé a entrar."), 401
+            return redirect(url_for("login", proximo=request.full_path.rstrip("?")))
+        g.conn, g.usuario = conn, usuario
+        try:
+            return f(*a, **kw)
+        finally:
+            conn.close()
+    return envoltorio
+
+
+def _pagina_login(*, registro=False, error="", usuario="", proximo="/"):
+    tabs = (f'<div class="tabs">'
+            f'<a href="{url_for("login")}" class="{"" if registro else "on"}">Entrar</a>'
+            f'<a href="{url_for("registro")}" class="{"on" if registro else ""}">Crear cuenta</a>'
+            f'</div>') if auth.REGISTRO_ABIERTO else ""
+    nota = (f"Elegí un usuario y una contraseña de al menos "
+            f"{auth.CLAVE_MINIMA} caracteres. Vas a arrancar con el tablero "
+            f"vacío: subí tus resúmenes desde ahí."
+            if registro else
+            "Tus resúmenes son solo tuyos: nadie más los ve.")
+    return (LOGIN_HTML.read_text(encoding="utf-8")
+            .replace("__TABS__", tabs)
+            .replace("__ERROR__", f'<div class="error">{escape(error)}</div>' if error else "")
+            .replace("__ACCION__", url_for("registro") if registro else url_for("login"))
+            .replace("__PROXIMO__", escape(proximo))
+            .replace("__USUARIO__", escape(usuario))
+            .replace("__AUTOCOMPLETE__", "new-password" if registro else "current-password")
+            .replace("__BOTON__", "Crear cuenta" if registro else "Entrar")
+            .replace("__NOTA__", nota))
+
+
+def _destino_seguro(proximo: str) -> str:
+    """Solo se redirige dentro de este sitio.
+
+    Sin esto, /login?proximo=https://otro.sitio convierte al login en un trampolin
+    comodo para mandar a alguien a una pagina que imita a esta.
+    """
+    if proximo.startswith("/") and not proximo.startswith("//"):
+        return proximo
+    return url_for("index")
+
+
+def _responder_con_sesion(conn, usuario_id: int, proximo: str):
+    token = auth.abrir_sesion(conn, usuario_id)
+    resp = redirect(_destino_seguro(proximo))
+    resp.set_cookie(
+        COOKIE, token,
+        max_age=auth.DIAS_SESION * 24 * 3600,
+        httponly=True,          # que el JS de la pagina no pueda leer el token
+        samesite="Lax",         # un POST desde otro sitio no lleva la cookie
+        secure=request.is_secure,
+    )
+    return resp
+
+
+# Freno simple a la fuerza bruta: se cuentan los intentos fallidos por IP.
+# En memoria, porque el servidor es uno solo; se pierde al reiniciar y esta bien.
+_FALLOS: dict[str, list] = {}
+MAX_FALLOS, VENTANA = 10, 15 * 60
+
+
+def _bloqueado(ip: str) -> bool:
+    n, desde = _FALLOS.get(ip, (0, 0.0))
+    if time.monotonic() - desde > VENTANA:
+        _FALLOS.pop(ip, None)
+        return False
+    return n >= MAX_FALLOS
+
+
+def _fallo(ip: str) -> None:
+    n, desde = _FALLOS.get(ip, (0, time.monotonic()))
+    if time.monotonic() - desde > VENTANA:
+        n, desde = 0, time.monotonic()
+    _FALLOS[ip] = [n + 1, desde]
+
+
+@app.get("/login")
+def login():
+    conn = db.connect(BASE)
+    try:
+        if auth.usuario_de_sesion(conn, request.cookies.get(COOKIE)):
+            return redirect(url_for("index"))
+    finally:
+        conn.close()
+    return _pagina_login(proximo=request.args.get("proximo", "/"))
+
+
+@app.post("/login")
+def login_post():
+    usuario = (request.form.get("usuario") or "").strip()
+    clave = request.form.get("clave") or ""
+    proximo = request.form.get("proximo") or "/"
+    ip = request.remote_addr or "?"
+
+    if _bloqueado(ip):
+        return _pagina_login(
+            error="Demasiados intentos fallidos. Esperá unos minutos.",
+            usuario=usuario, proximo=proximo), 429
+
+    conn = db.connect(BASE)
+    try:
+        fila = auth.autenticar(conn, usuario, clave)
+        if fila is None:
+            _fallo(ip)
+            # Un solo mensaje para los dos casos: decir "ese usuario no existe"
+            # le confirma a cualquiera que prueba nombres cuales si existen.
+            return _pagina_login(error="Usuario o contraseña incorrectos.",
+                                 usuario=usuario, proximo=proximo), 401
+        _FALLOS.pop(ip, None)
+        return _responder_con_sesion(conn, fila["id"], proximo)
+    finally:
+        conn.close()
+
+
+@app.get("/registro")
+def registro():
+    if not auth.REGISTRO_ABIERTO:
+        return _pagina_login(error="El registro está cerrado. "
+                                   "Pedí que te creen el usuario."), 403
+    return _pagina_login(registro=True, proximo=request.args.get("proximo", "/"))
+
+
+@app.post("/registro")
+def registro_post():
+    if not auth.REGISTRO_ABIERTO:
+        return _pagina_login(error="El registro está cerrado."), 403
+    usuario = (request.form.get("usuario") or "").strip()
+    clave = request.form.get("clave") or ""
+    proximo = request.form.get("proximo") or "/"
+
+    conn = db.connect(BASE)
+    try:
+        try:
+            uid = auth.crear_usuario(conn, usuario, clave)
+        except ValueError as exc:
+            return _pagina_login(registro=True, error=str(exc),
+                                 usuario=usuario, proximo=proximo), 400
+        return _responder_con_sesion(conn, uid, proximo)
+    finally:
+        conn.close()
+
+
+@app.post("/salir")
+def salir():
+    token = request.cookies.get(COOKIE)
+    conn = db.connect(BASE)
+    try:
+        auth.cerrar_sesion(conn, token)
+    finally:
+        conn.close()
+    resp = redirect(url_for("login"))
+    resp.delete_cookie(COOKIE)
+    return resp
+
+
+# --------------------------------------------------------------------------
 def nombre_seguro(nombre: str) -> str:
     """Se queda solo con el nombre del archivo, sin rutas ni '..'.
 
@@ -78,6 +268,22 @@ def nombre_seguro(nombre: str) -> str:
     limpio = Path(nombre.replace("\\", "/")).name
     limpio = "".join(c for c in limpio if c.isalnum() or c in " ._-()áéíóúñÁÉÍÓÚÑ")
     return limpio.strip() or "resumen.pdf"
+
+
+def carpeta_pdfs(conn, usuario_id: int, banco: str) -> Path:
+    """Donde se guardan los PDFs de ese usuario.
+
+    Cada usuario tiene su propia carpeta, para que los resumenes de uno no
+    queden mezclados con los de otro ni en la base ni en el disco.
+
+    El usuario mas antiguo es la excepcion: sigue usando /datos/<banco>, que es
+    donde ya estaban sus PDFs desde antes de que existieran los usuarios y lo
+    que montan los volumenes de siempre. Moverselos ahi habria significado
+    tocar el docker-compose de una instalacion que ya funciona.
+    """
+    if usuario_id == auth.usuario_legado(conn):
+        return DATOS / banco
+    return DATOS / "usuarios" / str(usuario_id) / banco
 
 
 def detectar_banco(pdf_path: Path) -> str | None:
@@ -126,27 +332,25 @@ def destino_unico(carpeta: Path, nombre: str, origen: Path) -> tuple[Path, bool]
 
 # --------------------------------------------------------------------------
 @app.get("/")
+@login_requerido
 def index():
-    conn = db.connect(BASE)
-    payload = build_payload(conn)
-    conn.close()
-    import json
+    payload = build_payload(g.conn, g.usuario["id"])
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     html = (TEMPLATE.read_text(encoding="utf-8")
             .replace("__DATA__", data)
-            .replace("__API__", "true"))
+            .replace("__API__", "true")
+            .replace("__USUARIO__", json.dumps(g.usuario["usuario"])))
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.get("/api/datos")
+@login_requerido
 def api_datos():
-    conn = db.connect(BASE)
-    payload = build_payload(conn)
-    conn.close()
-    return jsonify(payload)
+    return jsonify(build_payload(g.conn, g.usuario["id"]))
 
 
 @app.post("/api/categoria")
+@login_requerido
 def api_categoria():
     """Corrige la categoria de un movimiento (por defecto, de todo el comercio)."""
     datos = request.get_json(silent=True) or {}
@@ -161,13 +365,11 @@ def api_categoria():
     if len(categoria) > 60:
         return jsonify(ok=False, error="El nombre de categoria es muy largo."), 400
 
-    conn = db.connect(BASE)
     try:
-        r = db.set_categoria(conn, mov_id, categoria, solo_este=solo_este)
+        r = db.set_categoria(g.conn, g.usuario["id"], mov_id, categoria,
+                             solo_este=solo_este)
     except LookupError as exc:
         return jsonify(ok=False, error=str(exc)), 404
-    finally:
-        conn.close()
 
     if solo_este:
         mensaje = f"Categoría cambiada a «{categoria}» en este movimiento."
@@ -179,6 +381,7 @@ def api_categoria():
 
 
 @app.post("/api/subir")
+@login_requerido
 def api_subir():
     archivo = request.files.get("archivo")
     banco = (request.form.get("banco") or "").strip().lower()
@@ -238,7 +441,7 @@ def api_subir():
                        "¿Es un resumen de tarjeta?"),
             ), 400
 
-        carpeta = DATOS / banco
+        carpeta = carpeta_pdfs(g.conn, g.usuario["id"], banco)
         carpeta.mkdir(parents=True, exist_ok=True)
         destino, copiar = destino_unico(carpeta, nombre, tmp_pdf)
         if copiar:
@@ -254,21 +457,13 @@ def api_subir():
         control_ok = all(c.ok for c in checks)
         detalle = "\n".join(format_report(statement, checks))
 
-        conn = db.connect(BASE)
-        nuevos = db.insert_transactions(conn, statement.transactions,
-                                        Categorizer())
-        conn.execute(
-            """INSERT OR REPLACE INTO resumenes
-               (banco, periodo, archivo, cierre, vencimiento, control_ok, control_txt)
-               VALUES (?,?,?,?,?,?,?)""",
-            (statement.bank, statement.period, str(destino),
-             statement.close_date.isoformat() if statement.close_date else None,
-             statement.due_date.isoformat() if statement.due_date else None,
-             1 if control_ok else 0, detalle),
-        )
-        conn.commit()
-        total = conn.execute("SELECT COUNT(*) FROM movimientos").fetchone()[0]
-        conn.close()
+        nuevos = db.insert_transactions(g.conn, g.usuario["id"],
+                                        statement.transactions, Categorizer())
+        db.guardar_resumen(g.conn, g.usuario["id"], statement, control_ok,
+                           detalle, str(destino))
+        total = g.conn.execute(
+            "SELECT COUNT(*) FROM movimientos WHERE usuario_id = ?",
+            (g.usuario["id"],)).fetchone()[0]
 
         if nuevos == 0:
             mensaje = (f"{cfg['nombre']} · {statement.period}: ya estaba cargado, "
@@ -290,6 +485,8 @@ def api_subir():
 def main() -> None:
     puerto = int(os.environ.get("PUERTO", "8080"))
     BASE.parent.mkdir(parents=True, exist_ok=True)
+    # Crea la base y el usuario inicial antes de atender el primer pedido.
+    db.connect(BASE).close()
     try:
         from waitress import serve
         print(f"==> Tablero disponible en http://localhost:{puerto}", flush=True)

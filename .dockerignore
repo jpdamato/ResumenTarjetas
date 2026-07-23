@@ -2,6 +2,7 @@
 # acá, los movimientos quedarian dentro de la imagen y viajarian con ella.
 santander/
 bna/
+datos-usuarios/
 salida/
 *.pdf
 *.db
